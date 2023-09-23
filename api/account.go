@@ -6,16 +6,18 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	db "github.com/zsoltardai/simple_bank/db/sqlc"
 )
 
 type createAccountRequest struct {
 	Owner    string `json:"owner" binding:"required"`
-	Currency string `json:"currency" binding:"required,oneof=EUR USD CAD"`
+	Currency string `json:"currency" binding:"required,currency"`
 }
 
 func (server *Server) createAccount(ctx *gin.Context) {
 	var req createAccountRequest
+
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorResponse(err))
 	}
@@ -29,7 +31,17 @@ func (server *Server) createAccount(ctx *gin.Context) {
 	account, err := server.store.CreateAccount(context.Background(), arg)
 
 	if err != nil {
+
+		if pqError, ok := err.(*pq.Error); ok {
+			switch pqError.Code.Name() {
+			case "foreign_key_violation", "unique_violation":
+				ctx.JSON(http.StatusForbidden, errorResponse(err))
+				return
+			}
+		}
+
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
 	}
 
 	ctx.JSON(http.StatusOK, account)
@@ -55,10 +67,8 @@ func (server *Server) getAccount(ctx *gin.Context) {
 			return
 		}
 
-		if err != nil {
-			ctx.JSON(http.StatusInternalServerError, errorResponse(err))
-			return
-		}
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
 	}
 
 	ctx.JSON(http.StatusOK, account)
